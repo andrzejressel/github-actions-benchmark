@@ -17,16 +17,16 @@ jobs:
     
     strategy:
       matrix:
-        os: [ubuntu-latest, ubuntu-arm, macos-15, macos-15-intel]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-15, macos-15-intel]
         include:
           - os: ubuntu-latest
             platform: "Ubuntu x86_64"
-          - os: ubuntu-arm
+          - os: ubuntu-24.04-arm
             platform: "Ubuntu ARM64"
           - os: macos-15
-            platform: "macOS 15 ARM"
+            platform: "macOS 15"
           - os: macos-15-intel
-            platform: "macOS 15 x86"
+            platform: "macOS 15 intel"
     
     steps:
     - name: Checkout code
@@ -52,10 +52,10 @@ jobs:
         df -h
         echo ""
     
-    - name: Write Performance Test (1GB)
+    - name: Write Performance Test (5GB)
       run: |
-        echo "=== Write Performance Test (1GB) ==="
-        echo "Testing write speed with 1GB file..."
+        echo "=== Write Performance Test (5GB) ==="
+        echo "Testing write speed with 5GB file..."
         
         # Ensure clean cache before test
         if [[ "${{ runner.os }}" == "Linux" ]]; then
@@ -64,36 +64,49 @@ jobs:
           sync
         fi
         
-        # Test write performance
-        time_output=$(time (dd if=/dev/zero of=testfile_1gb bs=1M count=1024 && sync) 2>&1)
-        echo "$time_output"
+        # Test write performance with progress
+        echo "Starting 5GB write test with progress..."
+        start_time=$(date +%s)
+        dd if=/dev/zero of=testfile_5gb bs=1M count=5120 status=progress 2>&1 && sync
+        end_time=$(date +%s)
+        
+        duration=$((end_time - start_time))
+        echo "Write test completed in ${duration} seconds"
         
         # Extract and display results
-        if [[ -f testfile_1gb ]]; then
-          file_size=$(ls -lh testfile_1gb | awk '{print $5}')
+        if [[ -f testfile_5gb ]]; then
+          file_size=$(ls -lh testfile_5gb | awk '{print $5}')
           echo "Created file size: $file_size"
+          
+          # Calculate throughput
+          if [[ $duration -gt 0 ]]; then
+            throughput_mb=$((5120 / duration))
+            echo "Average write throughput: ${throughput_mb} MB/s"
+          fi
         fi
         
         # Clean up
-        rm -f testfile_1gb
+        rm -f testfile_5gb
         echo ""
     
-    - name: Write Performance Test (100MB with different block sizes)
+    - name: Write Performance Test (1GB-10GB with different block sizes)
       run: |
-        echo "=== Write Performance Test (Various Block Sizes) ==="
+        echo "=== Large File Write Performance Test (Various Block Sizes) ==="
         
-        for bs in 1k 4k 16k 64k 256k 1M; do
-          echo "Testing write speed with block size: $bs"
+        # Test different file sizes with optimal block sizes
+        declare -A test_configs=(
+          ["1G_1M"]="1024 1M"
+          ["2G_4M"]="512 4M" 
+          ["5G_8M"]="640 8M"
+          ["10G_16M"]="640 16M"
+        )
+        
+        for config in "${!test_configs[@]}"; do
+          read count bs <<< "${test_configs[$config]}"
+          size_label=${config%_*}
           
-          # Calculate count to get ~100MB
-          case $bs in
-            1k) count=102400 ;;
-            4k) count=25600 ;;
-            16k) count=6400 ;;
-            64k) count=1600 ;;
-            256k) count=400 ;;
-            1M) count=100 ;;
-          esac
+          echo "Testing ${size_label} file with ${bs} block size..."
+          echo "Command: dd if=/dev/zero of=testfile_${config} bs=${bs} count=${count}"
           
           if [[ "${{ runner.os }}" == "Linux" ]]; then
             sudo sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null || true
@@ -101,97 +114,230 @@ jobs:
             sync
           fi
           
-          time_output=$(time (dd if=/dev/zero of=testfile_${bs} bs=${bs} count=${count} && sync) 2>&1)
-          echo "$time_output"
-          rm -f testfile_${bs}
+          start_time=$(date +%s)
+          dd if=/dev/zero of=testfile_${config} bs=${bs} count=${count} status=progress 2>&1 && sync
+          end_time=$(date +%s)
+          
+          duration=$((end_time - start_time))
+          echo "${size_label} write completed in ${duration} seconds"
+          
+          if [[ -f testfile_${config} ]]; then
+            file_size=$(ls -lh testfile_${config} | awk '{print $5}')
+            echo "File size: $file_size"
+            
+            # Calculate throughput
+            if [[ $duration -gt 0 ]]; then
+              size_mb=$((count * ${bs//M/}))
+              throughput_mb=$((size_mb / duration))
+              echo "Average throughput: ${throughput_mb} MB/s"
+            fi
+          fi
+          
+          rm -f testfile_${config}
           echo ""
         done
     
-    - name: Read Performance Test
+    - name: Read Performance Test (Large Files)
       run: |
-        echo "=== Read Performance Test ==="
+        echo "=== Large File Read Performance Test ==="
         
-        # Create a test file for reading
-        echo "Creating 500MB test file for read test..."
-        dd if=/dev/zero of=readtest_file bs=1M count=500 2>/dev/null
-        sync
+        # Test with multiple large file sizes
+        declare -A read_configs=(
+          ["2G"]="2048"
+          ["5G"]="5120"
+          ["8G"]="8192"
+        )
         
-        # Clear cache before read test
-        if [[ "${{ runner.os }}" == "Linux" ]]; then
-          sudo sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null || true
-        else
-          sync
-        fi
-        
-        echo "Testing read speed..."
-        time_output=$(time dd if=readtest_file of=/dev/null bs=1M 2>&1)
-        echo "$time_output"
-        
-        # Clean up
-        rm -f readtest_file
-        echo ""
-    
-    - name: Mixed I/O Performance Test
-      run: |
-        echo "=== Mixed I/O Performance Test ==="
-        echo "Testing mixed read/write operations..."
-        
-        # Create source file
-        dd if=/dev/zero of=source_file bs=1M count=200 2>/dev/null
-        
-        # Test copy operation (read + write)
-        if [[ "${{ runner.os }}" == "Linux" ]]; then
-          sudo sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null || true
-        else
-          sync
-        fi
-        
-        echo "Copy test (200MB):"
-        time_output=$(time (dd if=source_file of=dest_file bs=1M && sync) 2>&1)
-        echo "$time_output"
-        
-        # Clean up
-        rm -f source_file dest_file
-        echo ""
-    
-    - name: Random I/O Test (if available)
-      run: |
-        echo "=== Random I/O Test ==="
-        
-        if command -v shuf >/dev/null 2>&1; then
-          echo "Testing random write pattern..."
+        for size_label in "${!read_configs[@]}"; do
+          count=${read_configs[$size_label]}
           
-          # Create file with random data
+          echo "Creating ${size_label} test file for read test..."
+          dd if=/dev/zero of=readtest_${size_label} bs=1M count=${count} status=progress 2>/dev/null
+          sync
+          
+          # Clear cache before read test
           if [[ "${{ runner.os }}" == "Linux" ]]; then
-            time_output=$(time (dd if=/dev/urandom of=random_file bs=1M count=50 && sync) 2>&1)
+            sudo sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null || true
           else
-            # macOS - use /dev/random but with smaller size due to entropy limitations
-            time_output=$(time (dd if=/dev/random of=random_file bs=1k count=1024 && sync) 2>&1)
+            sync
           fi
-          echo "$time_output"
           
-          rm -f random_file
+          echo "Testing ${size_label} read speed with progress..."
+          start_time=$(date +%s)
+          dd if=readtest_${size_label} of=/dev/null bs=4M status=progress 2>&1
+          end_time=$(date +%s)
+          
+          duration=$((end_time - start_time))
+          echo "${size_label} read completed in ${duration} seconds"
+          
+          # Calculate throughput
+          if [[ $duration -gt 0 ]]; then
+            throughput_mb=$((count / duration))
+            echo "Average read throughput: ${throughput_mb} MB/s"
+          fi
+          
+          # Clean up
+          rm -f readtest_${size_label}
+          echo ""
+        done
+    
+    - name: Mixed I/O Performance Test (Large Files)
+      run: |
+        echo "=== Large File Mixed I/O Performance Test ==="
+        
+        # Test copy operations with different file sizes
+        declare -A copy_configs=(
+          ["1G"]="1024"
+          ["3G"]="3072"
+          ["6G"]="6144"
+        )
+        
+        for size_label in "${!copy_configs[@]}"; do
+          count=${copy_configs[$size_label]}
+          
+          echo "Creating ${size_label} source file..."
+          dd if=/dev/zero of=source_${size_label} bs=1M count=${count} status=progress 2>/dev/null
+          sync
+          
+          # Test copy operation (read + write)
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            sudo sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null || true
+          else
+            sync
+          fi
+          
+          echo "Copy test (${size_label}) with progress:"
+          start_time=$(date +%s)
+          dd if=source_${size_label} of=dest_${size_label} bs=4M status=progress 2>&1 && sync
+          end_time=$(date +%s)
+          
+          duration=$((end_time - start_time))
+          echo "${size_label} copy completed in ${duration} seconds"
+          
+          # Calculate throughput (copy involves read + write, so actual data moved is 2x)
+          if [[ $duration -gt 0 ]]; then
+            throughput_mb=$((count / duration))
+            echo "Copy throughput: ${throughput_mb} MB/s"
+          fi
+          
+          # Clean up
+          rm -f source_${size_label} dest_${size_label}
+          echo ""
+        done
+    
+    - name: Sequential vs Random I/O Test (Large Files)
+      run: |
+        echo "=== Sequential vs Random I/O Test ==="
+        
+        # Sequential write test (large file)
+        echo "Sequential write test (4GB)..."
+        if [[ "${{ runner.os }}" == "Linux" ]]; then
+          sudo sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null || true
         else
-          echo "Random test tools not available on this platform"
+          sync
         fi
+        
+        start_time=$(date +%s)
+        dd if=/dev/zero of=sequential_4gb bs=8M count=512 status=progress 2>&1 && sync
+        end_time=$(date +%s)
+        
+        seq_duration=$((end_time - start_time))
+        echo "Sequential 4GB write completed in ${seq_duration} seconds"
+        
+        if [[ $seq_duration -gt 0 ]]; then
+          seq_throughput=$((4096 / seq_duration))
+          echo "Sequential write throughput: ${seq_throughput} MB/s"
+        fi
+        
+        # Test random access patterns if available
+        if command -v shuf >/dev/null 2>&1 && [[ "${{ runner.os }}" == "Linux" ]]; then
+          echo ""
+          echo "Random I/O simulation test..."
+          
+          # Create file with random data (smaller due to entropy limitations)
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            start_time=$(date +%s)
+            dd if=/dev/urandom of=random_1gb bs=1M count=1024 status=progress 2>&1 && sync
+            end_time=$(date +%s)
+            
+            rand_duration=$((end_time - start_time))
+            echo "Random 1GB write completed in ${rand_duration} seconds"
+            
+            if [[ $rand_duration -gt 0 ]]; then
+              rand_throughput=$((1024 / rand_duration))
+              echo "Random write throughput: ${rand_throughput} MB/s"
+            fi
+            
+            rm -f random_1gb
+          fi
+        else
+          echo "Random I/O test not available on this platform or tools missing"
+        fi
+        
+        rm -f sequential_4gb
         echo ""
     
-    - name: Storage Information Summary
+    - name: Stress Test - Concurrent Large File Operations
       run: |
-        echo "=== Final Storage Information ==="
-        echo "Available disk space:"
-        df -h .
+        echo "=== Concurrent Large File I/O Stress Test ==="
+        echo "Testing concurrent operations to stress the I/O subsystem..."
         
-        echo ""
-        echo "I/O statistics (if available):"
-        if command -v iostat >/dev/null 2>&1; then
-          iostat -x 1 1 2>/dev/null | tail -20 || echo "iostat not available"
+        # Function to run background write operations
+        run_bg_write() {
+          local id=$1
+          local size=$2
+          echo "Background write $id: Creating ${size}MB file..."
+          dd if=/dev/zero of=bg_write_${id} bs=1M count=${size} status=none 2>/dev/null && sync
+          echo "Background write $id: Completed ${size}MB"
+        }
+        
+        # Clear cache
+        if [[ "${{ runner.os }}" == "Linux" ]]; then
+          sudo sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null || true
         else
-          echo "iostat not available on this platform"
+          sync
         fi
         
+        echo "Starting concurrent write operations..."
+        start_time=$(date +%s)
+        
+        # Start multiple background write operations
+        run_bg_write "1" "2048" &  # 2GB
+        pid1=$!
+        run_bg_write "2" "1536" &  # 1.5GB
+        pid2=$!
+        run_bg_write "3" "1024" &  # 1GB
+        pid3=$!
+        
+        # Main thread also does I/O
+        echo "Main thread: Creating 3GB file with progress..."
+        dd if=/dev/zero of=main_write bs=4M count=768 status=progress 2>&1 && sync
+        
+        # Wait for background processes
+        echo "Waiting for background operations to complete..."
+        wait $pid1
+        wait $pid2  
+        wait $pid3
+        
+        end_time=$(date +%s)
+        duration=$((end_time - start_time))
+        
         echo ""
-        echo "Test completed on ${{ matrix.platform }}"
+        echo "Stress test completed in ${duration} seconds"
+        echo "Total data written: ~7.5GB across 4 concurrent operations"
+        
+        if [[ $duration -gt 0 ]]; then
+          total_throughput=$((7680 / duration))  # 7.5GB = 7680MB
+          echo "Combined throughput: ${total_throughput} MB/s"
+        fi
+        
+        # Clean up all files
+        rm -f bg_write_* main_write
+        
+        echo ""
+        echo "Final disk usage after cleanup:"
+        df -h .
+        echo ""
     
     - name: Upload Results (Optional)
       if: always()
