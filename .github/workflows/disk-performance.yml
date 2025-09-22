@@ -24,7 +24,9 @@ jobs:
           - os: ubuntu-arm
             platform: "Ubuntu ARM64"
           - os: macos-15
-            platform: "macOS 15"
+            platform: "macOS 15 ARM"
+          - os: macos-15-intel
+            platform: "macOS 15 x86"
     
     steps:
     - name: Checkout code
