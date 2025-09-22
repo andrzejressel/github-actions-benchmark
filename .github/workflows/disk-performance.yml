@@ -32,6 +32,21 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       
+
+    - name: Install FIO
+      run: |
+        echo "=== Installing FIO ==="
+        if [[ "${{ runner.os }}" == "Linux" ]]; then
+          sudo apt-get update
+          sudo apt-get install -y fio
+        elif [[ "${{ runner.os }}" == "macOS" ]]; then
+          brew install fio
+        fi
+        
+        echo "FIO version:"
+        fio --version
+        echo ""
+      
     - name: System Information
       run: |
         echo "=== System Information ==="
@@ -52,300 +67,340 @@ jobs:
         df -h
         echo ""
     
-    - name: Write Performance Test (5GB)
+    - name: Sequential Write Performance (Large Files)
       run: |
-        echo "=== Write Performance Test (5GB) ==="
-        echo "Testing write speed with 5GB file..."
+        echo "=== Sequential Write Performance Tests ==="
         
-        # Ensure clean cache before test
-        if [[ "${{ runner.os }}" == "Linux" ]]; then
-          sudo sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null || true
-        else
-          sync
-        fi
+        # 4GB Sequential Write Test
+        echo "Running 4GB sequential write test..."
+        fio --name=seq_write_4gb \
+            --ioengine=sync \
+            --rw=write \
+            --bs=4M \
+            --size=4G \
+            --numjobs=1 \
+            --runtime=300 \
+            --group_reporting \
+            --filename=fio_seq_write_4gb \
+            --output-format=normal
         
-        # Test write performance with progress
-        echo "Starting 5GB write test with progress..."
-        start_time=$(date +%s)
-        dd if=/dev/zero of=testfile_5gb bs=1M count=5120 status=progress 2>&1 && sync
-        end_time=$(date +%s)
+        rm -f fio_seq_write_4gb
+        echo ""
         
-        duration=$((end_time - start_time))
-        echo "Write test completed in ${duration} seconds"
+        # 8GB Sequential Write Test with different block size
+        echo "Running 8GB sequential write test (8M blocks)..."
+        fio --name=seq_write_8gb \
+            --ioengine=sync \
+            --rw=write \
+            --bs=8M \
+            --size=8G \
+            --numjobs=1 \
+            --runtime=600 \
+            --group_reporting \
+            --filename=fio_seq_write_8gb \
+            --output-format=normal
         
-        # Extract and display results
-        if [[ -f testfile_5gb ]]; then
-          file_size=$(ls -lh testfile_5gb | awk '{print $5}')
-          echo "Created file size: $file_size"
-          
-          # Calculate throughput
-          if [[ $duration -gt 0 ]]; then
-            throughput_mb=$((5120 / duration))
-            echo "Average write throughput: ${throughput_mb} MB/s"
-          fi
-        fi
-        
-        # Clean up
-        rm -f testfile_5gb
+        rm -f fio_seq_write_8gb
         echo ""
     
-    - name: Write Performance Test (1GB-10GB with different block sizes)
+    - name: Sequential Read Performance (Large Files)
       run: |
-        echo "=== Large File Write Performance Test (Various Block Sizes) ==="
+        echo "=== Sequential Read Performance Tests ==="
         
-        # Test different file sizes with optimal block sizes
-        declare -A test_configs=(
-          ["1G_1M"]="1024 1M"
-          ["2G_4M"]="512 4M" 
-          ["5G_8M"]="640 8M"
-          ["10G_16M"]="640 16M"
-        )
+        # Create test files first
+        echo "Creating 6GB test file for read tests..."
+        fio --name=create_file \
+            --ioengine=sync \
+            --rw=write \
+            --bs=8M \
+            --size=6G \
+            --numjobs=1 \
+            --filename=fio_read_test_6gb \
+            --output-format=terse > /dev/null
         
-        for config in "${!test_configs[@]}"; do
-          read count bs <<< "${test_configs[$config]}"
-          size_label=${config%_*}
+        # Sequential read test
+        echo "Running 6GB sequential read test..."
+        fio --name=seq_read_6gb \
+            --ioengine=sync \
+            --rw=read \
+            --bs=4M \
+            --size=6G \
+            --numjobs=1 \
+            --runtime=300 \
+            --group_reporting \
+            --filename=fio_read_test_6gb \
+            --output-format=normal
+        
+        rm -f fio_read_test_6gb
+        echo ""
+        
+        # Larger read test
+        echo "Creating 10GB test file for large read test..."
+        fio --name=create_large_file \
+            --ioengine=sync \
+            --rw=write \
+            --bs=16M \
+            --size=10G \
+            --numjobs=1 \
+            --filename=fio_read_test_10gb \
+            --output-format=terse > /dev/null
+        
+        echo "Running 10GB sequential read test..."
+        fio --name=seq_read_10gb \
+            --ioengine=sync \
+            --rw=read \
+            --bs=8M \
+            --size=10G \
+            --numjobs=1 \
+            --runtime=600 \
+            --group_reporting \
+            --filename=fio_read_test_10gb \
+            --output-format=normal
+        
+        rm -f fio_read_test_10gb
+        echo ""
+    
+    - name: Random I/O Performance Tests
+      run: |
+        echo "=== Random I/O Performance Tests ==="
+        
+        # Random write test (smaller size for random I/O)
+        echo "Running 2GB random write test (4K blocks)..."
+        fio --name=rand_write_2gb \
+            --ioengine=sync \
+            --rw=randwrite \
+            --bs=4K \
+            --size=2G \
+            --numjobs=1 \
+            --runtime=300 \
+            --group_reporting \
+            --filename=fio_rand_write_2gb \
+            --output-format=normal
+        
+        rm -f fio_rand_write_2gb
+        echo ""
+        
+        # Random read test
+        echo "Creating 3GB file for random read test..."
+        fio --name=create_rand_read_file \
+            --ioengine=sync \
+            --rw=write \
+            --bs=1M \
+            --size=3G \
+            --numjobs=1 \
+            --filename=fio_rand_read_3gb \
+            --output-format=terse > /dev/null
+        
+        echo "Running 3GB random read test (4K blocks)..."
+        fio --name=rand_read_3gb \
+            --ioengine=sync \
+            --rw=randread \
+            --bs=4K \
+            --size=3G \
+            --numjobs=1 \
+            --runtime=300 \
+            --group_reporting \
+            --filename=fio_rand_read_3gb \
+            --output-format=normal
+        
+        rm -f fio_rand_read_3gb
+        echo ""
+    
+    - name: Mixed Read/Write Performance Tests
+      run: |
+        echo "=== Mixed Read/Write Performance Tests ==="
+        
+        # Mixed random I/O (70% read, 30% write)
+        echo "Running 4GB mixed random I/O test (70% read, 30% write)..."
+        fio --name=mixed_rw_4gb \
+            --ioengine=sync \
+            --rw=randrw \
+            --rwmixread=70 \
+            --bs=4K \
+            --size=4G \
+            --numjobs=1 \
+            --runtime=300 \
+            --group_reporting \
+            --filename=fio_mixed_rw_4gb \
+            --output-format=normal
+        
+        rm -f fio_mixed_rw_4gb
+        echo ""
+        
+        # Sequential mixed I/O
+        echo "Running 5GB sequential mixed I/O test (80% read, 20% write)..."
+        fio --name=seq_mixed_5gb \
+            --ioengine=sync \
+            --rw=rw \
+            --rwmixread=80 \
+            --bs=1M \
+            --size=5G \
+            --numjobs=1 \
+            --runtime=400 \
+            --group_reporting \
+            --filename=fio_seq_mixed_5gb \
+            --output-format=normal
+        
+        rm -f fio_seq_mixed_5gb
+        echo ""
+    
+    - name: Concurrent I/O Stress Tests
+      run: |
+        echo "=== Concurrent I/O Stress Tests ==="
+        
+        # Multiple jobs sequential write
+        echo "Running concurrent sequential write test (4 jobs, 2GB each)..."
+        fio --name=concurrent_seq_write \
+            --ioengine=sync \
+            --rw=write \
+            --bs=4M \
+            --size=2G \
+            --numjobs=4 \
+            --runtime=400 \
+            --group_reporting \
+            --filename_format='fio_concurrent_seq_$jobnum' \
+            --output-format=normal
+        
+        rm -f fio_concurrent_seq_*
+        echo ""
+        
+        # Multiple jobs random I/O
+        echo "Running concurrent random I/O test (3 jobs, 1.5GB each)..."
+        fio --name=concurrent_rand_rw \
+            --ioengine=sync \
+            --rw=randrw \
+            --rwmixread=60 \
+            --bs=64K \
+            --size=1536M \
+            --numjobs=3 \
+            --runtime=300 \
+            --group_reporting \
+            --filename_format='fio_concurrent_rand_$jobnum' \
+            --output-format=normal
+        
+        rm -f fio_concurrent_rand_*
+        echo ""
+    
+    - name: Latency and IOPS Tests
+      run: |
+        echo "=== Latency and IOPS Tests ==="
+        
+        # Low latency test with small blocks
+        echo "Running low latency test (4K random read)..."
+        fio --name=latency_test \
+            --ioengine=sync \
+            --rw=randread \
+            --bs=4K \
+            --size=1G \
+            --numjobs=1 \
+            --runtime=120 \
+            --iodepth=1 \
+            --group_reporting \
+            --filename=fio_latency_test \
+            --output-format=normal
+        
+        rm -f fio_latency_test
+        echo ""
+        
+        # High IOPS test
+        echo "Running high IOPS test (4K random write)..."
+        fio --name=iops_test \
+            --ioengine=sync \
+            --rw=randwrite \
+            --bs=4K \
+            --size=2G \
+            --numjobs=2 \
+            --runtime=180 \
+            --iodepth=1 \
+            --group_reporting \
+            --filename_format='fio_iops_$jobnum' \
+            --output-format=normal
+        
+        rm -f fio_iops_*
+        echo ""
+    
+    - name: Block Size Comparison Tests
+      run: |
+        echo "=== Block Size Comparison Tests ==="
+        
+        # Test different block sizes for sequential write
+        for bs in 4K 16K 64K 256K 1M 4M; do
+          echo "Testing sequential write with ${bs} block size (2GB file)..."
+          fio --name=blocksize_test_${bs} \
+              --ioengine=sync \
+              --rw=write \
+              --bs=${bs} \
+              --size=2G \
+              --numjobs=1 \
+              --runtime=180 \
+              --group_reporting \
+              --filename=fio_blocksize_${bs} \
+              --output-format=normal
           
-          echo "Testing ${size_label} file with ${bs} block size..."
-          echo "Command: dd if=/dev/zero of=testfile_${config} bs=${bs} count=${count}"
-          
-          if [[ "${{ runner.os }}" == "Linux" ]]; then
-            sudo sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null || true
-          else
-            sync
-          fi
-          
-          start_time=$(date +%s)
-          dd if=/dev/zero of=testfile_${config} bs=${bs} count=${count} status=progress 2>&1 && sync
-          end_time=$(date +%s)
-          
-          duration=$((end_time - start_time))
-          echo "${size_label} write completed in ${duration} seconds"
-          
-          if [[ -f testfile_${config} ]]; then
-            file_size=$(ls -lh testfile_${config} | awk '{print $5}')
-            echo "File size: $file_size"
-            
-            # Calculate throughput
-            if [[ $duration -gt 0 ]]; then
-              size_mb=$((count * ${bs//M/}))
-              throughput_mb=$((size_mb / duration))
-              echo "Average throughput: ${throughput_mb} MB/s"
-            fi
-          fi
-          
-          rm -f testfile_${config}
+          rm -f fio_blocksize_${bs}
           echo ""
         done
     
-    - name: Read Performance Test (Large Files)
+    - name: Storage Endurance Test
       run: |
-        echo "=== Large File Read Performance Test ==="
+        echo "=== Storage Endurance Test ==="
         
-        # Test with multiple large file sizes
-        declare -A read_configs=(
-          ["2G"]="2048"
-          ["5G"]="5120"
-          ["8G"]="8192"
-        )
+        # Sustained write test
+        echo "Running sustained write endurance test (6GB over extended time)..."
+        fio --name=endurance_test \
+            --ioengine=sync \
+            --rw=write \
+            --bs=1M \
+            --size=6G \
+            --numjobs=1 \
+            --runtime=600 \
+            --time_based \
+            --group_reporting \
+            --filename=fio_endurance_test \
+            --output-format=normal
         
-        for size_label in "${!read_configs[@]}"; do
-          count=${read_configs[$size_label]}
-          
-          echo "Creating ${size_label} test file for read test..."
-          dd if=/dev/zero of=readtest_${size_label} bs=1M count=${count} status=progress 2>/dev/null
-          sync
-          
-          # Clear cache before read test
-          if [[ "${{ runner.os }}" == "Linux" ]]; then
-            sudo sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null || true
-          else
-            sync
-          fi
-          
-          echo "Testing ${size_label} read speed with progress..."
-          start_time=$(date +%s)
-          dd if=readtest_${size_label} of=/dev/null bs=4M status=progress 2>&1
-          end_time=$(date +%s)
-          
-          duration=$((end_time - start_time))
-          echo "${size_label} read completed in ${duration} seconds"
-          
-          # Calculate throughput
-          if [[ $duration -gt 0 ]]; then
-            throughput_mb=$((count / duration))
-            echo "Average read throughput: ${throughput_mb} MB/s"
-          fi
-          
-          # Clean up
-          rm -f readtest_${size_label}
-          echo ""
-        done
-    
-    - name: Mixed I/O Performance Test (Large Files)
-      run: |
-        echo "=== Large File Mixed I/O Performance Test ==="
-        
-        # Test copy operations with different file sizes
-        declare -A copy_configs=(
-          ["1G"]="1024"
-          ["3G"]="3072"
-          ["6G"]="6144"
-        )
-        
-        for size_label in "${!copy_configs[@]}"; do
-          count=${copy_configs[$size_label]}
-          
-          echo "Creating ${size_label} source file..."
-          dd if=/dev/zero of=source_${size_label} bs=1M count=${count} status=progress 2>/dev/null
-          sync
-          
-          # Test copy operation (read + write)
-          if [[ "${{ runner.os }}" == "Linux" ]]; then
-            sudo sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null || true
-          else
-            sync
-          fi
-          
-          echo "Copy test (${size_label}) with progress:"
-          start_time=$(date +%s)
-          dd if=source_${size_label} of=dest_${size_label} bs=4M status=progress 2>&1 && sync
-          end_time=$(date +%s)
-          
-          duration=$((end_time - start_time))
-          echo "${size_label} copy completed in ${duration} seconds"
-          
-          # Calculate throughput (copy involves read + write, so actual data moved is 2x)
-          if [[ $duration -gt 0 ]]; then
-            throughput_mb=$((count / duration))
-            echo "Copy throughput: ${throughput_mb} MB/s"
-          fi
-          
-          # Clean up
-          rm -f source_${size_label} dest_${size_label}
-          echo ""
-        done
-    
-    - name: Sequential vs Random I/O Test (Large Files)
-      run: |
-        echo "=== Sequential vs Random I/O Test ==="
-        
-        # Sequential write test (large file)
-        echo "Sequential write test (4GB)..."
-        if [[ "${{ runner.os }}" == "Linux" ]]; then
-          sudo sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null || true
-        else
-          sync
-        fi
-        
-        start_time=$(date +%s)
-        dd if=/dev/zero of=sequential_4gb bs=8M count=512 status=progress 2>&1 && sync
-        end_time=$(date +%s)
-        
-        seq_duration=$((end_time - start_time))
-        echo "Sequential 4GB write completed in ${seq_duration} seconds"
-        
-        if [[ $seq_duration -gt 0 ]]; then
-          seq_throughput=$((4096 / seq_duration))
-          echo "Sequential write throughput: ${seq_throughput} MB/s"
-        fi
-        
-        # Test random access patterns if available
-        if command -v shuf >/dev/null 2>&1 && [[ "${{ runner.os }}" == "Linux" ]]; then
-          echo ""
-          echo "Random I/O simulation test..."
-          
-          # Create file with random data (smaller due to entropy limitations)
-          if [[ "${{ runner.os }}" == "Linux" ]]; then
-            start_time=$(date +%s)
-            dd if=/dev/urandom of=random_1gb bs=1M count=1024 status=progress 2>&1 && sync
-            end_time=$(date +%s)
-            
-            rand_duration=$((end_time - start_time))
-            echo "Random 1GB write completed in ${rand_duration} seconds"
-            
-            if [[ $rand_duration -gt 0 ]]; then
-              rand_throughput=$((1024 / rand_duration))
-              echo "Random write throughput: ${rand_throughput} MB/s"
-            fi
-            
-            rm -f random_1gb
-          fi
-        else
-          echo "Random I/O test not available on this platform or tools missing"
-        fi
-        
-        rm -f sequential_4gb
+        rm -f fio_endurance_test
         echo ""
     
-    - name: Stress Test - Concurrent Large File Operations
+    - name: Final System Status
       run: |
-        echo "=== Concurrent Large File I/O Stress Test ==="
-        echo "Testing concurrent operations to stress the I/O subsystem..."
-        
-        # Function to run background write operations
-        run_bg_write() {
-          local id=$1
-          local size=$2
-          echo "Background write $id: Creating ${size}MB file..."
-          dd if=/dev/zero of=bg_write_${id} bs=1M count=${size} status=none 2>/dev/null && sync
-          echo "Background write $id: Completed ${size}MB"
-        }
-        
-        # Clear cache
-        if [[ "${{ runner.os }}" == "Linux" ]]; then
-          sudo sync && echo 3 | sudo tee /proc/sys/vm/drop_caches > /dev/null || true
-        else
-          sync
-        fi
-        
-        echo "Starting concurrent write operations..."
-        start_time=$(date +%s)
-        
-        # Start multiple background write operations
-        run_bg_write "1" "2048" &  # 2GB
-        pid1=$!
-        run_bg_write "2" "1536" &  # 1.5GB
-        pid2=$!
-        run_bg_write "3" "1024" &  # 1GB
-        pid3=$!
-        
-        # Main thread also does I/O
-        echo "Main thread: Creating 3GB file with progress..."
-        dd if=/dev/zero of=main_write bs=4M count=768 status=progress 2>&1 && sync
-        
-        # Wait for background processes
-        echo "Waiting for background operations to complete..."
-        wait $pid1
-        wait $pid2  
-        wait $pid3
-        
-        end_time=$(date +%s)
-        duration=$((end_time - start_time))
-        
-        echo ""
-        echo "Stress test completed in ${duration} seconds"
-        echo "Total data written: ~7.5GB across 4 concurrent operations"
-        
-        if [[ $duration -gt 0 ]]; then
-          total_throughput=$((7680 / duration))  # 7.5GB = 7680MB
-          echo "Combined throughput: ${total_throughput} MB/s"
-        fi
-        
-        # Clean up all files
-        rm -f bg_write_* main_write
-        
-        echo ""
-        echo "Final disk usage after cleanup:"
+        echo "=== Final System Status ==="
+        echo "Available disk space after all tests:"
         df -h .
+        
         echo ""
+        echo "System load after intensive I/O tests:"
+        if command -v uptime >/dev/null 2>&1; then
+          uptime
+        fi
+        
+        # Memory usage
+        echo ""
+        echo "Memory usage:"
+        if command -v free >/dev/null 2>&1; then
+          free -h
+        elif command -v vm_stat >/dev/null 2>&1; then
+          vm_stat
+        fi
+        
+        echo ""
+        echo "All FIO disk performance tests completed on ${{ matrix.platform }}"
+        echo "Test Summary:"
+        echo "- Sequential Write/Read tests up to 10GB"
+        echo "- Random I/O tests with various block sizes"
+        echo "- Mixed workload tests"
+        echo "- Concurrent stress tests"
+        echo "- Latency and IOPS benchmarks"
+        echo "- Block size comparison analysis"
+        echo "- Storage endurance testing"
     
-    - name: Upload Results (Optional)
+    - name: Generate Test Summary
       if: always()
       run: |
-        echo "=== Test Summary for ${{ matrix.platform }} ==="
-        echo "All disk performance tests completed"
+        echo "=== FIO Test Summary for ${{ matrix.platform }} ==="
         echo "Platform: ${{ matrix.platform }}"
         echo "Runner: ${{ runner.os }}"
         echo "Timestamp: $(date -u)"
         echo "Repository: ${{ github.repository }}"
         echo "Commit: ${{ github.sha }}"
+        echo "All FIO-based disk performance tests completed successfully"
