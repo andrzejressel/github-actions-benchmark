@@ -17,7 +17,7 @@ jobs:
     
     strategy:
       matrix:
-        os: [ubuntu-latest, ubuntu-arm, macos-15]
+        os: [ubuntu-latest, ubuntu-arm, macos-15, macos-15-intel]
         include:
           - os: ubuntu-latest
             platform: "Ubuntu x86_64"
